@@ -2,7 +2,10 @@ package core;
 
 import java.io.*;
 import java.nio.channels.FileChannel;
+import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.List;
+import java.util.stream.Collectors;
 
 public class JarToJre {
 
@@ -16,8 +19,7 @@ public class JarToJre {
 
     public static void main(String[] args) throws Exception {
         args = new String[]{
-                "E:\\git\\github\\MineStore\\MineClient\\target\\MineClient-0.0.1-SNAPSHOT.jar",
-                "jre"
+                "E:/git/github/MineStore/MineServer/target/MineServer-0.0.1-SNAPSHOT.jar"
         };
 
         initCommandLine(args);
@@ -38,12 +40,14 @@ public class JarToJre {
      * @param args
      */
     private static void initCommandLine(String[] args) {
-        if (args.length < 2) {
+        if (args.length < 1) {
             System.out.println("java JarToJre.java springboot.jar jre");
             return;
         }
+
         jarPath = new File(args[0]);
-        jreOut = new File(args[1]);
+        jreOut = new File(args.length == 1 ? "jre" : args[1]);
+
         System.out.println("jar : " + jarPath.getAbsolutePath());
         System.out.println("out : " + jreOut.getAbsolutePath());
 
@@ -78,6 +82,8 @@ public class JarToJre {
         //解压文件
         Util.unzip(javaTools.getJarFile(), tempJarFile, tempWorkFile);
 
+        //分析依赖
+        String jdeps = Util.jdeps(javaTools.getJdepsFile(), tempWorkFile);
 
     }
 
@@ -116,14 +122,69 @@ public class JarToJre {
 
     public static class Util {
 
+        /**
+         * 递归扫描所哟文件
+         *
+         * @param rootFile
+         * @param files
+         */
+        public static void scanFile(File rootFile, List<File> files) {
+            if (rootFile.isDirectory()) {
+                for (File file : rootFile.listFiles()) {
+                    scanFile(file, files);
+                }
+            } else if (rootFile.isFile()) {
+                files.add(rootFile);
+            }
+        }
+
 
         /**
          * 分析这个目录下的所有java支持的文件的依赖
          *
-         * @param work
+         * @param workFile
          * @return
          */
-        public static String jdeps(File work) {
+        public static String jdeps(File jdkJarFile, File workFile) throws Exception {
+
+            //扫描所有的文件
+            List<File> files = new ArrayList<>();
+            scanFile(workFile, files);
+            List<String> targetFiles = files.stream()
+                    .filter((it) -> {
+                        String fileName = it.getName();
+                        String extName = fileName.substring(fileName.lastIndexOf("."), fileName.length());
+//                        return extName.equalsIgnoreCase(".class") || extName.equalsIgnoreCase(".jar");
+                        return extName.equalsIgnoreCase(".jar");
+                    }).map((it) -> {
+                        return it.getAbsolutePath();
+                    })
+                    .collect(Collectors.toList());
+
+
+            //执行命令行
+            ProcessBuilder processBuilder = new ProcessBuilder();
+            processBuilder.directory(workFile);
+            List<String> cmds = new ArrayList<>() {{
+                add(jdkJarFile.getAbsolutePath());
+                add("--module-path");
+                add("$JAVA_HOME/jmods");
+                add("--print-module-deps");
+                add("--ignore-missing-deps");
+                add("--multi-release 11");
+            }};
+            cmds.addAll(targetFiles);
+            processBuilder.command(cmds);
+
+
+            processBuilder.redirectOutput(ProcessBuilder.Redirect.INHERIT);
+            processBuilder.redirectError(ProcessBuilder.Redirect.INHERIT);
+
+            Process process = processBuilder.start();
+            process.waitFor();
+
+//            String.join(" ", tarFile)
+
             // class, jar
 
 //            jdeps --module-path $JAVA_HOME/jmods --print-module-deps --ignore-missing-deps  --multi-release 11 file1 file2
